@@ -5,6 +5,8 @@ import { uploadOnCloudinary } from "../utils/cloudinary.js"
 import {apiRespone} from "../utils/apiRespone.js"
 import path from "path"
 import jwt from "jsonwebtoken"
+import mongoose from "mongoose"
+import { pipeline } from "stream"
 
 const generateAccessAndRefreshToken = async (userId) => {
     try {
@@ -392,6 +394,57 @@ const getUserChannelProfile = asyncHandler(async(req, res) => {
 
 })
 
+const getWatchHistory = asyncHandler(async(req, res) => {
+    // Agreegation me direct mongodb ka code jata hai usko mongoose process nhi karta hai issiliye jo kaam normal code me mongoose automaticall(req.user._id jo ki string return karta hia na ki mongodb object id, mongoose issi string ko actual monogodb object id me convert kar deta hai) karta hai usko yaha pe hume kudd karna parege jiske liye mongoose methods provide karta hai.
+
+    const user = await User.aggregate([
+        {
+            $match: {
+                _id: new mongoose.Types.ObjectId(req.user?._id)
+            }
+        },
+
+        {
+            $lookup: {
+                from: "videos",
+                localField: "WatchHistory",
+                foreignField: "_id",
+                as: "watchHistory",
+                pipeline: [
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "owner",
+                            pipeline: [
+                                {
+                                    $project: {
+                                        fullName: 1,
+                                        userName: 1,
+                                        avatar
+                                    }
+                                }
+                            ]
+                        }
+                    },
+
+                    {
+                        $addFields: {
+                            owner: {
+                                $first: "$owner"
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    ])
+
+    return res.status(200)
+    .json(new apiRespone(200, user[0].watchHistory, "Watch History fetched"))
+})
+
 export { 
     registerUser,
     loginUser,
@@ -402,6 +455,7 @@ export {
     updateAccountDetails,
     updateUserAvatar,
     updateUserCoverImage,
-    getUserChannelProfile
+    getUserChannelProfile,
+    getWatchHistory
 
 }
