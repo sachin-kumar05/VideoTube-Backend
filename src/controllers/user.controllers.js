@@ -149,8 +149,8 @@ const logoutUser = asyncHandler(async (req, res) => {
     await User.findByIdAndUpdate(
         req.user._id,
         {
-            $set: {
-                refreshToken: undefined
+            $unset: {
+                refreshToken: 1
             }
         },
         {
@@ -227,7 +227,7 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     }
 
     user.password = newPassword
-    await user.save({validateBeforeSave})
+    await user.save({validateBeforeSave: false})
 
     return res.status(200)
     .json(new apiRespone(200, {}, "Password changed successfully"))
