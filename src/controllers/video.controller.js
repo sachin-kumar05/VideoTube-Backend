@@ -1,3 +1,4 @@
+import mongoose, { isValidObjectId } from "mongoose";
 import { Video } from "../models/video.model.js";
 import { User } from "../models/user.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -60,6 +61,10 @@ const getVideoById = asyncHandler(async(req, res) => {
     // verify if video exist 
     // send the video in response
     const {videoId} = req.params
+
+    if(!isValidObjectId(videoId)) {
+        throw new apiError(400, "Invalid videoId")
+    }
 
     const video = await Video.findById(videoId)
     if(!video) {
