@@ -1,5 +1,6 @@
 import mongoose, { isValidObjectId } from "mongoose";
 import { Comment } from "../models/comment.model.js";
+import { Video } from "../models/video.model.js"
 import { apiError } from "../utils/apiError.js";
 import { apiRespone } from "../utils/apiRespone.js";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -33,45 +34,59 @@ const getVideoComments = asyncHandler(async(req, res) => {
 
 const addComment = asyncHandler(async(req, res) => {
     const { videoId } = req.params
-    const { content } = req.body
 
-    if(!content) {
-        throw new apiError(400, "Comment can not be empty")
+    if(!isValidObjectId(videoId)) {
+        throw new apiError(400, "VideoId is not valid")
+    }
+
+    const video = await Video.findById(videoId)
+
+    if(!video) {
+        throw new apiError(404, "Video not found")
+    }
+
+    const { content } = req.body
+    if(!content?.trim()) {
+        throw new apiError(400, "Comment should not be empty")
     }
 
     const comment = await Comment.create({
-        content,
+        content: content.trim(),
         video: videoId,
         owner: req.user._id
     })
 
-    if(!comment) {
-        throw new apiError(500, "Something went wrong while creating comment")
-    }
-
-    return res.status(200).json(
-        new apiRespone(200, comment, "Created comment successfully")
+    return res.status(201).json(
+        new apiRespone(201, comment, "Comment added successfully")
     )
 })
 
 const updateComment = asyncHandler(async(req, res) => {
     const { commentId } = req.params
-    const { content } = req.body
 
-    if(!content) {
-        throw new apiError(400, "comment field can not be empty")
+    if(!isValidObjectId(commentId)) {
+        throw new apiError(400, "Invalid comment id")
     }
 
-    const updatedComment = await Comment.findByIdAndUpdate(
-        commentId,
+    const { content } = req.body
+
+    if(!content?.trim()) {
+        throw new apiError(400, "Comment cannot be empty")
+    }
+
+    const updatedComment = await Comment.findOneAndUpdate(
         {
-            content
+            _id: commentId,
+            owner: req.user._id
+        },
+        {
+            $set: { content: content.trim() }
         },
         {new: true}
     )
 
     if(!updatedComment) {
-        throw new apiError(500, "Something went wrong while updating the comment")
+        throw new apiError(404, "Comment not found or unauthorized")
     }
 
     return res.status(200).json(
@@ -82,14 +97,27 @@ const updateComment = asyncHandler(async(req, res) => {
 const deleteComment = asyncHandler(async(req, res) => {
     const { commentId } = req.params
 
-    await Comment.findByIdAndDelete(commentId)
+    if(!isValidObjectId(commentId)) {
+        throw new apiError(400, "Invalid commentId")
+    } 
+
+    const deletedComment = await Comment.findOneAndDelete(
+        {
+            _id: commentId,
+            owner: req.user._id
+        }
+    )
+
+    if(!deletedComment) {
+        throw new apiError(404, "Comment not found or Unauthorized")
+    }
 
     return res.status(200).json(
-        new apiRespone(200, "", "Deleted comment successfully")
+        new apiRespone(200, null, "Deleted comment successfully")
     )
 })
 
-export{
+export {
     getVideoComments,
     addComment,
     updateComment,
