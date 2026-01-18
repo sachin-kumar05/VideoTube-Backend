@@ -32,6 +32,10 @@ const getAllVideos = asyncHandler(async(req, res) => {
         matchStage.owner = new mongoose.Types.ObjectId(userId)
     }
 
+    if(!matchStage) {
+        throw new apiError(400, "Nothing to match")
+    }
+
     const sortStage = {
         [sortBy]: sortType === "asc" ? 1 : -1
     }
@@ -55,6 +59,7 @@ const getAllVideos = asyncHandler(async(req, res) => {
             $project: {
                 "owner.password": 0,
                 "owner.email": 0,
+                "owner.fullName": 0,
                 "owner.refreshToken": 0,
                 "owner.watchHistory": 0,
                 "owner.coverImage": 0
