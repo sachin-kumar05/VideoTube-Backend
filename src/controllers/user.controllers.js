@@ -422,7 +422,7 @@ const getWatchHistory = asyncHandler(async(req, res) => {
                                     $project: {
                                         fullName: 1,
                                         userName: 1,
-                                        avatar
+                                        avatar: 1
                                     }
                                 }
                             ]
