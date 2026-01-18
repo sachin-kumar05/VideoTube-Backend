@@ -7,68 +7,139 @@ import { apiRespone } from "../utils/apiRespone.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 
 const getAllVideos = asyncHandler(async(req, res) => {
-    // get userId
-    const {page = 1, limit = 10, query, sortBy, sortType, userId} = req.query
-    const allVideos = await Video.aggregate([
-        //TODO: I have to write aggreagate pipeline
+    const {
+        page = 1, 
+        limit = 10, 
+        query, 
+        sortBy = "createdAt", 
+        sortType = "desc", 
+        userId
+    } = req.query
+    
+    const pageNum = Math.max(parseInt(page), 1)
+    const limitNum = Math.min(parseInt(limit), 50)
+
+    const matchStage = { isPublic: true }
+
+    if(query?.trim()) {
+        matchStage.$or = [
+            { title: { $regex: query, $options: "i" } },
+            { description: { $regex: query, $options: "i" } }
+        ]
+    }
+
+    if(userId && isValidObjectId(userId)) {
+        matchStage.owner = new mongoose.Types.ObjectId(userId)
+    }
+
+    const sortStage = {
+        [sortBy]: sortType === "asc" ? 1 : -1
+    }
+
+    const aggregate = Video.aggregate([
+        {
+            $match: matchStage
+        },
+        {
+            $lookup: {
+                from: "users",
+                localField: "owner",
+                foreignField: "_id",
+                as: "owner"
+            }
+        },
+        {
+            $unwind: "$owner"
+        },
+        {
+            $project: {
+                "owner.password": 0,
+                "owner.email": 0,
+                "owner.refreshToken": 0,
+                "owner.watchHistory": 0,
+                "owner.coverImage": 0
+            }
+        }
     ])
+
+    const options = {
+        page: pageNum,
+        limit: limitNum,
+        sort: sortStage
+    }
+
+    const result = await Video.aggregatePaginate(aggregate, options)
+
+    return res.status(200)
+    .json(
+        new apiRespone(200, result, "Video fetched successfully")
+    )
+
 })
 
 const publishAVideo = asyncHandler(async(req, res) => {
-    // verify input from user both text and file
-    // Calculate the duration of video.
+
     const {title, description} = req.body
-    if(!(title && description)) {
-        throw new apiError(400, "Title and Description is required")
+
+    if(!(title?.trim() && description?.trim())) {
+        throw new apiError(400, "Title and description is required")
     } 
 
     const videoFileLocalPath = req.files?.videoFile?.[0].path;
-    const thumbnailLocalPath = req.files?.videoFile?.[0].path;
 
     if(!videoFileLocalPath) {
         throw new apiError(400, "Video file is required")
     }
-    
+
+    const thumbnailLocalPath = req.files?.thumbnail?.[0].path;
+
     if(!thumbnailLocalPath) {
         throw new apiError(400, "Thumbnail is required")
     }
 
     const videoFile = await uploadOnCloudinary(videoFileLocalPath)
+
     if(!videoFile.url) {
-        throw new apiError(400, "Error while uploading the videoFile on cloudinary")
+        throw new apiError(500, "Something went wrong while uploading the videoFile.")
     }
 
     const thumbnail = await uploadOnCloudinary(thumbnailLocalPath)
+
     if(!thumbnail.url) {{
-        throw new apiError(400, "Error while uploading the thumbnail on cloudinary")
+        throw new apiError(400, "Something went wrong while uploading the thumbnail.")
     }}
 
     const video = await Video.create({
         videoFile: videoFile.url,
         thumbnail: thumbnail.url,
-        title,
-        description,
+        title: title.trim(),
+        description: description.trim(),
         duration: videoFile.duration,
         owner: req.user._id
     })
 
-    return res.status(200).json(
-        new apiRespone(200, video, "Videofile uploaded successfully")
+    return res.status(201).json(
+        new apiRespone(201, video, "Video file uploaded successfully")
     )
 })
 
 const getVideoById = asyncHandler(async(req, res) => {
-    // verify if video exist 
-    // send the video in response
-    const {videoId} = req.params
+    const { videoId } = req.params
 
     if(!isValidObjectId(videoId)) {
-        throw new apiError(400, "Invalid videoId")
+        throw new apiError(400, "Invalid video id")
     }
 
-    const video = await Video.findById(videoId)
+    const video = await Video.findOne({
+        _id: videoId,
+        $or: [
+            {isPublic: true},
+            {owner: req.user._id}
+        ]
+    })
+
     if(!video) {
-        throw new apiError(404, "Video is not found")
+        throw new apiError(404, "Video not found")
     }
 
     return res.status(200).json(
@@ -77,24 +148,48 @@ const getVideoById = asyncHandler(async(req, res) => {
 })
 
 const updateVideo = asyncHandler(async(req, res) => {
-    const {videoId} = req.params
+    const { videoId } = req.params
     
-    const {title, description} = req.body
-
-    if(!(title && description)) {
-        throw new apiError(400, "title and description both fields are required")
+    if(!isValidObjectId(videoId)) {
+        throw new apiError(400, "Invalid video id")
     }
-    //TODO: I have to also update thumbnail.
-    const updatedVideoDetails = await Video.findByIdAndUpdate(
+    
+    const { title, description } = req.body
+    const thumbnailLocalPath = req.files?.thumbnail?.[0].path;
+
+    const updateField = {}
+
+    if(title?.trim()) updateField.title = title.trim()
+    if(description?.trim()) updateField.description = description.trim()
+
+    if(thumbnailLocalPath) {
+        const thumbnail = await uploadOnCloudinary(thumbnailLocalPath)
+
+        if(!thumbnail.url) {
+            throw new apiError(500, "Thumbnail upload failed")
+        }
+
+        updateField.thumbnail = thumbnail.url
+    }
+
+    if(!Object.keys(updateField).length) {
+        throw new apiError(400, "Nothing to update")
+    }
+
+    const updatedVideoDetails = await Video.findOneAndUpdate(
         {
-            videoId,
-            $set: {
-                title: title,
-                description: description
-            },
+            _id: videoId,
+            owner: req.user._id
+        },
+        {
+            $set: updateField
         },
         {new: true}
     )
+
+    if(!updatedVideoDetails) {
+        throw new apiError(404, "Video not found or unauthorized")
+    }
 
     return res.status(200).json(
         new apiRespone(200, updatedVideoDetails, "Video details updated successfully")
@@ -102,29 +197,56 @@ const updateVideo = asyncHandler(async(req, res) => {
 })
 
 const deleteVideo = asyncHandler(async(req, res) => {
-    const {videoId} = params
+    const { videoId } = req.params
 
-    const deletedVideo = await Video.findByIdAndDelete({videoId})
+    if(!isValidObjectId(videoId)) {
+        throw new apiError(400, "Invalid video id")
+    }
+
+    const deletedVideo = await Video.findOneAndDelete(
+        {
+            _id: videoId,
+            owner: req.user._id
+        }
+    )
+
+    if(!deletedVideo) {
+        throw new apiError(404, "Video not found or unauthorized")
+    }
 
     return res.status(200).json(
-        new apiRespone(200, deleteVideo, "Video deleted successfully")
+        new apiRespone(200, null, "Video deleted successfully")
     )
 })
 
 const togglePublishStatus = asyncHandler(async(req, res) => {
-    const {videoId} = req.params
+    const { videoId } = req.params
+    
+    if(!isValidObjectId(videoId)) {
+        throw new apiError(400, "Invalid video id")
+    }
 
-    await findByIdAndUpdate(
-        {
-            videoId,
-            $set: {
-                isPublic: !isPublic
+    const video = await Video.findOneAndUpdate(
+        { 
+            _id: videoId, 
+            owner: req.user._id 
+        },
+        [
+            { $set: 
+                { isPublic: 
+                    { $not: "$isPublic" } 
+                } 
             }
-        }
+        ],
+        { new: true }
     )
 
+    if(!video) {
+        throw new apiError(404, "Video not found or unauthorized")
+    }
+
     return res.status(200).json(
-        new apiRespone(200, "", "toggled successfully")
+        new apiRespone(200, "", "Toggled successfully")
     )
 })
 
